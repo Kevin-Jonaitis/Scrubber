@@ -1,11 +1,6 @@
 package org.json;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
-import java.io.StringReader;
+import java.io.*;
 import java.util.ArrayList;
 import java.util.HashSet;
 
@@ -49,35 +44,28 @@ public class JSONTokener {
     private char    previous;
     private Reader  reader;
     private boolean usePrevious;
-    private static HashSet<String> scrubableKeys;
+    private static HashSet<String> scrubable;
+    public StringBuilder stringBuilder = new StringBuilder();
+    //This flag basically means we wont be "recording" what we're reading into our stringbuilder
+    private boolean scrubbing = false;
+
 
     static {
-        scrubableKeys = new HashSet<String>();
-        scrubableKeys.add("ssn");
-        scrubableKeys.add("name");
-        scrubableKeys.add("card_number");
-        scrubableKeys.add("email");
-        scrubableKeys.add("phone");
-        scrubableKeys.add("cvc");
-        scrubableKeys.add("address");
-        scrubableKeys.add("dob");
-        scrubableKeys.add("ssn_last4");
-        scrubableKeys.add("phone_number");
-    }
-
-    public static boolean shouldScrub(ArrayList<String> keys) {
-        for(int i = 0; i < keys.size(); i++) {
-
-            if (keys.get(i) instanceof String &&
-                    scrubableKeys.contains((String) keys.get(i))) {
-                return true;
-            }
-        }
-        return false;
+        scrubable = new HashSet<String>();
+        scrubable.add("ssn");
+        scrubable.add("name");
+        scrubable.add("card_number");
+        scrubable.add("email");
+        scrubable.add("phone");
+        scrubable.add("cvc");
+        scrubable.add("address");
+        scrubable.add("dob");
+        scrubable.add("ssn_last4");
+        scrubable.add("phone_number");
     }
 
     public static boolean shouldScrub(String key) {
-        return scrubableKeys.contains(key);
+        return scrubable.contains(key);
     }
 
 
@@ -188,6 +176,7 @@ public class JSONTokener {
      */
     public char next() throws JSONException {
         int c;
+        boolean isUsingPrevious = usePrevious;
         if (this.usePrevious) {
             this.usePrevious = false;
             c = this.previous;
@@ -214,6 +203,9 @@ public class JSONTokener {
             this.character += 1;
         }
         this.previous = (char) c;
+        if (!isUsingPrevious && !scrubbing) {
+            stringBuilder.append((char) c);
+        }
         return this.previous;
     }
 
@@ -289,7 +281,7 @@ public class JSONTokener {
      * @return      A String.
      * @throws JSONException Unterminated string.
      */
-    public String nextString(char quote) throws JSONException {
+    public String nextString(char quote, boolean scrub) throws JSONException {
         char c;
         StringBuilder sb = new StringBuilder();
         for (;;) {
@@ -338,7 +330,11 @@ public class JSONTokener {
                 if (c == quote) {
                     return sb.toString();
                 }
-                sb.append(c);
+                if (scrub) {
+                    sb.append(scrub(c));
+                } else {
+                    sb.append(c);
+                }
             }
         }
     }
@@ -392,33 +388,20 @@ public class JSONTokener {
     }
 
 
-    /**
-     * Get the next value. The value can be a Boolean, Double, Integer,
-     * JSONArray, JSONObject, Long, or String, or the JSONObject.NULL object.
-     * @throws JSONException If syntax error.
-     *
-     * @return An object.
+    /***
+     * This logic has been pulled out of nextValue, so that we can give nextValue make nextValue a void return,
+     * and create a seperation of concerns(parsing values vs parsing keys). I really think they only reason they
+     * put it in there in the first place is to de-dupe code.
+     * @return
      */
-    public Object nextValue(boolean shouldScrub) throws JSONException {
+    public String parseKey() {
         char c = this.nextClean();
         String string;
 
         switch (c) {
             case '"':
             case '\'':
-
-                //This is the ONLY place we should be calling scrub
-                if (shouldScrub) {
-                    return scrub(this.nextString(c));
-                } else {
-                    return this.nextString(c);
-                }
-            case '{':
-                this.back();
-                return new JSONObject(this, shouldScrub);
-            case '[':
-                this.back();
-                return new JSONArray(this, shouldScrub);
+                return this.nextString(c, false);
         }
 
         /*
@@ -441,26 +424,82 @@ public class JSONTokener {
         if ("".equals(string)) {
             throw this.syntaxError("Missing value");
         }
-        return JSONObject.stringToValue(string);
+        return string;
+
     }
 
-    private String scrub(Object object) {
-        //joeschmoe@hotmail.com
-        String s = object.toString();
-        String resultString = "";
-        for(int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (
-                    c >= 'A' && c <= 'Z' ||
-                            c >= 'a' && c <= 'z' ||
-                            c >= '0' && c <= '9'
-                    ) {
-                resultString += "*";
-            } else {
-                resultString += c;
-            }
+    /**
+     * Get the next value. The value can be a Boolean, Double, Integer,
+     * JSONArray, JSONObject, Long, or String, or the JSONObject.NULL object.
+     * @throws JSONException If syntax error.
+     *
+     * This method has been modified to ONLY return values when we're parsing a key.
+     * So basically,
+     *
+     * @return An object.
+     */
+    public void nextValue(boolean shouldScrub) throws JSONException {
+        char c = this.nextClean();
+        String string;
+
+        switch (c) {
+            case '"':
+            case '\'':
+                //This is the ONLY place we should be calling scrub
+                if (shouldScrub) {
+                    // Tell the string builder to stop "recording"
+                    scrubbing = true;
+                    // Grab the scrubbed string, and add it to the string builder
+                    String scrubbedString = this.nextString(c, shouldScrub);
+                    scrubbing = false;
+                    stringBuilder.append(scrubbedString);
+                    return;
+                } else {
+                    this.nextString(c, false);
+                    return;
+                }
+            case '{':
+                this.back();
+                JSONObject.parseJsonObject(this, shouldScrub);
+                return;
+            case '[':
+                this.back();
+                JSONArray.parseJSONArray(this, shouldScrub);
+                return;
         }
-        return resultString;
+
+        /*
+         * Handle unquoted text. This could be the values true, false, or
+         * null, or it can be a number. An implementation (such as this one)
+         * is allowed to also accept non-standard forms.
+         *
+         * Accumulate characters until we reach the end of the text or a
+         * formatting character.
+         */
+
+        StringBuilder sb = new StringBuilder();
+        while (c >= ' ' && ",:]}/\\\"[{;=#".indexOf(c) < 0) {
+            sb.append(c);
+            c = this.next();
+        }
+        this.back();
+
+        string = sb.toString().trim();
+        if ("".equals(string)) {
+            throw this.syntaxError("Missing value");
+        }
+    }
+
+    private char scrub(char c) {
+        if (
+                c >= 'A' && c <= 'Z' ||
+                        c >= 'a' && c <= 'z' ||
+                        c >= '0' && c <= '9'
+                ) {
+            return '*';
+        } else {
+            return c;
+        }
     }
 
 

@@ -2,6 +2,8 @@ package com.company.redacted;
 
 import java.io.*;
 
+import com.sun.xml.internal.messaging.saaj.util.ByteInputStream;
+import com.sun.xml.internal.messaging.saaj.util.ByteOutputStream;
 import org.json.*;
 
 /*
@@ -9,10 +11,8 @@ import org.json.*;
  */
 
 class Scrub {
-  public static void main(String[] args) {
-
+  public static void main(String[] args) throws IOException {
     runTestCases();
-
   }
 
 
@@ -48,7 +48,7 @@ class Scrub {
 
 
   // helper for reading in example files
-  private static String readFile(String fileName) 
+  public static String readFile(String fileName)
     throws IOException 
   {
     BufferedReader br = new BufferedReader(new FileReader(fileName));

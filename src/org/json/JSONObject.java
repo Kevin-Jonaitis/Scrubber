@@ -24,9 +24,7 @@ package org.json;
  SOFTWARE.
  */
 
-import java.io.IOException;
-import java.io.StringWriter;
-import java.io.Writer;
+import java.io.*;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -134,7 +132,13 @@ public class JSONObject {
     /**
      * The map where the JSONObject's properties are kept.
      */
-    private final Map<String, Object> map;
+    private Map<String, Object> map;
+
+    // The string that we're building that the json will be "streamed" too. I don't know how you wanted me to change
+    //the interface, so I simply stored the value as a stringBuilder.
+    //However, it would be just as easy to pass in an "outputStream" into the JSONObject, and have the code
+    //write to the output stream as it's building the Json.
+    StringBuilder stringBuilder;
 
     /**
      * It is sometimes more convenient and less ambiguous to have a
@@ -171,17 +175,7 @@ public class JSONObject {
         }
     }
 
-    /**
-     * Construct a JSONObject from a JSONTokener.
-     *
-     * @param x
-     *            A JSONTokener object containing the source string.
-     * @throws JSONException
-     *             If there is a syntax error in the source string or a
-     *             duplicated key.
-     */
-    public JSONObject(JSONTokener x, boolean shouldScrub) throws JSONException {
-        this();
+    public static void parseJsonObject(JSONTokener x, boolean shouldScrub) {
         char c;
         String key;
 
@@ -198,7 +192,7 @@ public class JSONObject {
             default:
                 x.back();
                 // We should never scrub a key
-                key = x.nextValue(false).toString();
+                key = x.parseKey();
             }
 
 // The key is followed by ':'.
@@ -211,7 +205,7 @@ public class JSONObject {
             boolean oldShouldScrub = shouldScrub;
             // All nested values should be scrubbed if this key should be scrubbed.
             shouldScrub = shouldScrub || JSONTokener.shouldScrub(key);
-            this.putOnce(key, x.nextValue(shouldScrub));
+            x.nextValue(shouldScrub);
             // Once we come back up from the recurssion, we should reset the scrub value
             shouldScrub = oldShouldScrub;
 
@@ -317,8 +311,9 @@ public class JSONObject {
      *                duplicated key.
      */
     public JSONObject(String source) throws JSONException {
-        //The "should scrub" should never be set when we're first creating an object
-        this(new JSONTokener(source), false);
+        JSONTokener tokener = new JSONTokener(source);
+        this.stringBuilder = tokener.stringBuilder;
+        parseJsonObject(tokener, false);
     }
     /**
      * Construct a JSONObject from a ResourceBundle.
@@ -1624,11 +1619,13 @@ public class JSONObject {
      */
     @Override
     public String toString() {
-        try {
-            return this.toString(0);
-        } catch (Exception e) {
-            return null;
-        }
+        //Use our string builder
+        return stringBuilder.toString();
+//        try {
+//            return this.toString(0);
+//        } catch (Exception e) {
+//            return null;
+//        }
     }
 
     /**
